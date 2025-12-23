@@ -57,17 +57,11 @@ func Start() {
 }
 
 func ApplyMiddlewares(mux *http.ServeMux) http.Handler {
-	// applied/runs from bottom
-	handler := middlewares.CompressionMiddleware(mux)
-	handler = middlewares.SecurityHeaders(handler)
+	// applied/runs from bottom->top
+
+	// handler := middlewares.CompressionMiddleware(mux) // payload is always small hence doesn't required
+	handler := middlewares.SecurityHeaders(mux)
 	handler = middlewares.RateLimiterMiddleware(handler)
-	// can move config somewhere else
-	handler = middlewares.HPPMiddleware(handler, &middlewares.HppMiddlewareConfig{
-		VerifyBodyForm:      true,
-		VerifyQuery:         true,
-		AllowedBodyFormKeys: []string{"name", "id"},
-		AllowedQueryKeys:    []string{"sortBy", "sortOrder", "id", "name"},
-	})
 	handler = middlewares.Cors(handler)
 
 	return handler
