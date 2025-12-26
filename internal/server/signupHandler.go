@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	utils "github.com/Yash-Kansagara/GoAuth/internal/Utils"
 	"github.com/Yash-Kansagara/GoAuth/internal/db"
@@ -58,9 +59,9 @@ func PostLoginHandler(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(bodyBytes, &loginReq)
 
 	db := db.GetDB()
-	rowResp := db.QueryRow("SELECT (password) FROM users WHERE username = ? OR email = ?", loginReq.UsernameOrEmail, loginReq.UsernameOrEmail)
+	rowResp := db.QueryRow("SELECT * FROM users WHERE username = ? OR email = ?", loginReq.UsernameOrEmail, loginReq.UsernameOrEmail)
 	row := models.DBPasswordRow{}
-	err = rowResp.Scan(&row.Password)
+	err = rowResp.Scan(&row.UserId, &row.Username, &row.Email, &row.Password)
 	if err == sql.ErrNoRows {
 		w.Header().Set("Content-Type", "Application/json")
 		w.Write([]byte("{\"status\":\"failed\",\"error\":\"user not found\"}"))
@@ -72,6 +73,20 @@ func PostLoginHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(row.Password, ":")
 	w.Header().Set("Content-Type", "Application/json")
 	if utils.GetHashWithSalt(parts[0], loginReq.Password) == parts[1] {
+
+		// generate JWT token to send with login success
+
+		token, err := utils.SignToken(row.Username, row.UserId, row.Email)
+		if err == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "Bearer",
+				Value:    token,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   true,
+				Expires:  time.Now().Add(24 * time.Hour),
+			})
+		}
 		w.Write([]byte("{\"status\":\"success\",\"error\":null}"))
 	} else {
 		w.Write([]byte("{\"status\":\"failed\",\"error\":\"wrong passord\"}"))
