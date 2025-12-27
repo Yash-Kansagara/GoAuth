@@ -56,11 +56,21 @@ func Start() {
 
 }
 
+var jwtMiddlewareExcludePaths = []string{
+	"/login",
+	"/logout",
+	"/signup",
+}
+
 func ApplyMiddlewares(mux *http.ServeMux) http.Handler {
 	// applied/runs from bottom->top
 
 	// handler := middlewares.CompressionMiddleware(mux) // payload is always small hence doesn't required
 	handler := middlewares.SecurityHeaders(mux)
+
+	jwtMiddleware := middlewares.ExcludePath(middlewares.JWTMiddleware, jwtMiddlewareExcludePaths...)
+	handler = jwtMiddleware(handler)
+
 	handler = middlewares.RateLimiterMiddleware(handler)
 	handler = middlewares.Cors(handler)
 

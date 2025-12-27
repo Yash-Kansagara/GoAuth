@@ -17,6 +17,7 @@ import (
 func RegisterSignupHandler(mux *http.ServeMux) {
 	mux.HandleFunc("POST /signup", PostSignupHandler)
 	mux.HandleFunc("POST /login", PostLoginHandler)
+	mux.HandleFunc("POST /logout", PostLogoutHandler)
 }
 
 func PostSignupHandler(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +86,25 @@ func PostLoginHandler(w http.ResponseWriter, r *http.Request) {
 				HttpOnly: true,
 				Secure:   true,
 				Expires:  time.Now().Add(24 * time.Hour),
+				SameSite: http.SameSiteStrictMode,
 			})
 		}
 		w.Write([]byte("{\"status\":\"success\",\"error\":null}"))
 	} else {
 		w.Write([]byte("{\"status\":\"failed\",\"error\":\"wrong passord\"}"))
 	}
+}
+
+func PostLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "Bearer",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  time.Unix(0, 0),
+	})
+	w.Header().Set("Content-Type", "Application/json")
+	w.Write([]byte("{\"status\":\"success\",\"error\":null}"))
 }
