@@ -11,9 +11,15 @@ type Login struct {
 	Password        string `json:"password"`
 }
 
-type DBPasswordRow struct {
+type DBUserRow struct {
 	Password string `json:"password"`
 	UserId   string `json:"userid"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+}
+
+type UpdatePasswordReq struct {
+	UsernameOrEmail string `json:"usernameOrEmail"`
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
 }

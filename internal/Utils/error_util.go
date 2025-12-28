@@ -7,7 +7,8 @@ import (
 
 func WriteIfError(w http.ResponseWriter, err error, reponseMsg string, status int) bool {
 	if err != nil {
-		fmt.Println(reponseMsg, err.Error())
+		fmt.Println(reponseMsg)
+		fmt.Println(err.Error())
 		http.Error(w, reponseMsg, status)
 		return true
 	}
