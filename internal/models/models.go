@@ -39,6 +39,10 @@ type UpdatePasswordReq struct {
 	NewPassword     string `json:"newPassword"`
 }
 
+type ResetPasswordReq struct {
+	NewPassword string `json:"newPassword"`
+}
+
 type ForgotPasswordReq struct {
 	UsernameOrEmail string `json:"usernameOrEmail"`
 }

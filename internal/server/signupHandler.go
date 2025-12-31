@@ -24,6 +24,7 @@ func RegisterSignupHandler(mux *http.ServeMux) {
 	mux.HandleFunc("POST /logout", PostLogoutHandler)
 	mux.HandleFunc("POST /updatePassword", PostUpdatePasswordHandler)
 	mux.HandleFunc("POST /forgotPassword", PostForgotPasswordHandler)
+	mux.HandleFunc("POST /resetPassword", PostResetPasswordHandler)
 }
 
 func PostSignupHandler(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +134,58 @@ func PostUpdatePasswordHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func PostResetPasswordHandler(w http.ResponseWriter, r *http.Request) {
+
+	query := r.URL.Query()
+	userId, token := "", ""
+	if query.Has("id") && query.Has("token") {
+		userId = query.Get("id")
+		token = query.Get("token")
+	} else {
+		http.Error(w, "Invalid Request", http.StatusBadRequest)
+		return
+	}
+
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if utils.WriteIfError(w, err, "Error reading request", http.StatusInternalServerError) {
+		return
+	}
+
+	resetPasswordReq := models.ResetPasswordReq{}
+	err = json.Unmarshal(bodyBytes, &resetPasswordReq)
+	if utils.WriteIfError(w, err, "Error reading request", http.StatusInternalServerError) {
+		return
+	}
+
+	row, err := getUserResetPasswordDataByUserid(userId)
+	if err == sql.ErrNoRows {
+		w.Header().Set("Content-Type", "Application/json")
+		w.Write([]byte("{\"status\":\"failed\",\"error\":\"user not found\"}"))
+		return
+	}
+	if utils.WriteIfError(w, err, "Error fetching user data", http.StatusInternalServerError) {
+		return
+	}
+
+	if token == row.ResetPasswordToken.String &&
+		row.ResetPasswordTokenExpiry.Valid &&
+		row.ResetPasswordTokenExpiry.Time.After(time.Now()) {
+
+		err = updatePasswordInDB(row.UserId, resetPasswordReq.NewPassword)
+		if err != nil {
+			http.Error(w, "Failed to update password", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "Application/json")
+		w.Write([]byte("{\"status\":\"success\",\"error\":null}"))
+	} else {
+		http.Error(w, "Invalid password reset request", http.StatusBadRequest)
+		return
+	}
+
+}
+
 func isPasswordValid(hash string, password string) bool {
 	parts := strings.Split(hash, ":")
 	if utils.GetHashWithSalt(parts[0], password) == parts[1] {
@@ -153,6 +206,14 @@ func getCurrentUserFromDB(usernameOrEmail string) (models.DBUserRow, error) {
 func getUserResetPasswordData(usernameOrEmail string) (models.DBResetPasswordData, error) {
 	db := db.GetDB()
 	rowResp := db.QueryRow("SELECT * FROM users WHERE username = ? OR email = ?", usernameOrEmail, usernameOrEmail)
+	row := models.DBResetPasswordData{}
+	err := rowResp.Scan(&row.UserId, &row.Username, &row.Email, &row.Password, &row.ResetPasswordToken, &row.ResetPasswordTokenExpiry)
+	return row, err
+}
+
+func getUserResetPasswordDataByUserid(userid string) (models.DBResetPasswordData, error) {
+	db := db.GetDB()
+	rowResp := db.QueryRow("SELECT * FROM users WHERE userid = ?", userid)
 	row := models.DBResetPasswordData{}
 	err := rowResp.Scan(&row.UserId, &row.Username, &row.Email, &row.Password, &row.ResetPasswordToken, &row.ResetPasswordTokenExpiry)
 	return row, err
@@ -285,7 +346,7 @@ func sendPasswordResetMail(emailId string, resetUrl string, duration time.Durati
 	email.SetHeader("From", "goauth@goauth.com")
 	email.SetHeader("To", emailId)
 	email.SetHeader("Subject", "Password reset")
-	email.SetBody("text/plain", fmt.Sprintf("Click this link to reset your password: %s.\n Link valid till %s", resetUrl, duration))
+	email.SetBody("text/plain", fmt.Sprintf("Click this link to reset your password: %s\n Link valid till %s", resetUrl, duration))
 
 	smtpHost := os.Getenv("SMTP_HOST")
 	smtpPort, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
