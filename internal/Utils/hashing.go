@@ -2,6 +2,7 @@ package utils
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 
@@ -24,4 +25,12 @@ func GetHashWithSalt(saltString string, val string) string {
 	}
 	hash := argon2.IDKey([]byte(val), salt, 1, 64*1024, 4, 32)
 	return base64.StdEncoding.EncodeToString(hash)
+}
+
+func GetRandomHash() string {
+
+	randomData := make([]byte, 16)
+	rand.Read(randomData)
+	hash := sha256.Sum256(randomData)
+	return base64.StdEncoding.EncodeToString(hash[:])
 }

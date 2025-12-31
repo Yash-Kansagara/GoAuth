@@ -60,6 +60,7 @@ var jwtMiddlewareExcludePaths = []string{
 	"/login",
 	"/logout",
 	"/signup",
+	"/forgotPassword",
 }
 
 func ApplyMiddlewares(mux *http.ServeMux) http.Handler {

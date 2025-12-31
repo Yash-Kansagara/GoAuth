@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	utils "github.com/Yash-Kansagara/GoAuth/internal/Utils"
 	"github.com/Yash-Kansagara/GoAuth/internal/db"
 	"github.com/Yash-Kansagara/GoAuth/internal/models"
+	"gopkg.in/gomail.v2"
 )
 
 func RegisterSignupHandler(mux *http.ServeMux) {
@@ -19,6 +23,7 @@ func RegisterSignupHandler(mux *http.ServeMux) {
 	mux.HandleFunc("POST /login", PostLoginHandler)
 	mux.HandleFunc("POST /logout", PostLogoutHandler)
 	mux.HandleFunc("POST /updatePassword", PostUpdatePasswordHandler)
+	mux.HandleFunc("POST /forgotPassword", PostForgotPasswordHandler)
 }
 
 func PostSignupHandler(w http.ResponseWriter, r *http.Request) {
@@ -139,10 +144,41 @@ func isPasswordValid(hash string, password string) bool {
 
 func getCurrentUserFromDB(usernameOrEmail string) (models.DBUserRow, error) {
 	db := db.GetDB()
-	rowResp := db.QueryRow("SELECT * FROM users WHERE username = ? OR email = ?", usernameOrEmail, usernameOrEmail)
+	rowResp := db.QueryRow("SELECT userid, username, email, password FROM users WHERE username = ? OR email = ?", usernameOrEmail, usernameOrEmail)
 	row := models.DBUserRow{}
 	err := rowResp.Scan(&row.UserId, &row.Username, &row.Email, &row.Password)
 	return row, err
+}
+
+func getUserResetPasswordData(usernameOrEmail string) (models.DBResetPasswordData, error) {
+	db := db.GetDB()
+	rowResp := db.QueryRow("SELECT * FROM users WHERE username = ? OR email = ?", usernameOrEmail, usernameOrEmail)
+	row := models.DBResetPasswordData{}
+	err := rowResp.Scan(&row.UserId, &row.Username, &row.Email, &row.Password, &row.ResetPasswordToken, &row.ResetPasswordTokenExpiry)
+	return row, err
+}
+
+func setUserResetPasswordData(userid string, token string, expiray time.Time) (*sql.Tx, error) {
+	sqldb := db.GetDB()
+	tx, err := sqldb.Begin()
+	if err != nil {
+		return nil, err
+	}
+	rowResp, err := tx.Exec("UPDATE users SET reset_password_token = ?,reset_password_token_expiry = ? WHERE userid = ?", token, expiray, userid)
+	if err != nil {
+		return nil, err
+	}
+	affected, err := rowResp.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if affected != 1 {
+		tx.Rollback()
+		err = fmt.Errorf("Incorrect rows affected: ", affected)
+		return nil, err
+	}
+	return tx, nil
 }
 
 func updatePasswordInDB(userid string, password string) error {
@@ -187,4 +223,76 @@ func setJWTCookie(w http.ResponseWriter, value string) {
 		SameSite: http.SameSiteStrictMode,
 		Expires:  exp,
 	})
+}
+
+func PostForgotPasswordHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	bodyBytes, err := io.ReadAll(r.Body)
+	if utils.WriteIfError(w, err, "Error reading request", http.StatusInternalServerError) {
+		return
+	}
+
+	forgotPasswordReq := models.ForgotPasswordReq{}
+	json.Unmarshal(bodyBytes, &forgotPasswordReq)
+
+	row, err := getUserResetPasswordData(forgotPasswordReq.UsernameOrEmail)
+	if utils.WriteIfError(w, err, "Server error", http.StatusInternalServerError) {
+		return
+	}
+
+	if row.ResetPasswordTokenExpiry.Valid && row.ResetPasswordTokenExpiry.Time.After(time.Now()) {
+		// not expired
+		// resend same mail / error
+		fmt.Println("row:", row)
+		fmt.Println(row.ResetPasswordTokenExpiry.Time)
+		w.Header().Set("Content-Type", "Application/json")
+		w.Write([]byte("{\"status\":\"fail\",\"error\":\"mail already sent\"}"))
+	} else {
+		// expired or do not exist
+		// create new and send mail
+		randomHash := utils.GetRandomHash()
+		resetExpiryEnv := os.Getenv("FORGET_PASS_EXPIRY_DURATION")
+		resetExpDuration, err := time.ParseDuration(resetExpiryEnv)
+		if err != nil {
+			resetExpDuration = time.Duration(10 * time.Minute)
+		}
+
+		tx, err := setUserResetPasswordData(row.UserId, randomHash, time.Now().Add(resetExpDuration))
+		defer tx.Commit() // commit only if we are able to send the mail
+		if utils.WriteIfError(w, err, "Error Updating user data", http.StatusInternalServerError) {
+			tx.Rollback()
+			return
+		}
+
+		randomHash = url.QueryEscape(randomHash)
+		resetUrl := utils.GetHostUrl(fmt.Sprintf("/resetPassword?id=%s&token=%s", row.UserId, randomHash))
+
+		fmt.Println("reset url:", resetUrl)
+		err = sendPasswordResetMail(row.Email, resetUrl, resetExpDuration)
+		if utils.WriteIfError(w, err, "Error sending password reset email", http.StatusInternalServerError) {
+			tx.Rollback()
+			return
+		}
+
+		w.Header().Set("Content-Type", "Application/json")
+		w.Write([]byte("{\"status\":\"success\",\"error\":null}"))
+	}
+
+}
+
+func sendPasswordResetMail(emailId string, resetUrl string, duration time.Duration) error {
+	email := gomail.NewMessage()
+	email.SetHeader("From", "goauth@goauth.com")
+	email.SetHeader("To", emailId)
+	email.SetHeader("Subject", "Password reset")
+	email.SetBody("text/plain", fmt.Sprintf("Click this link to reset your password: %s.\n Link valid till %s", resetUrl, duration))
+
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpPort, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
+	if err != nil {
+		fmt.Println("Invalid smtp port, default port 1025 will be used, Error:", err)
+		smtpPort = 1025
+	}
+	dialer := gomail.NewDialer(smtpHost, smtpPort, "", "")
+	return dialer.DialAndSend(email)
 }
